@@ -26,7 +26,7 @@ module.exports = async (req, _res, next) => {
     const decoded = verifyAccessToken(token);
 
     // Verify user exists and is active in database
-    const users = await query("SELECT id, email, name, role, is_active FROM users WHERE id = ?", [decoded.id]);
+    const users = await query("SELECT id, email, name, role, is_active, public_id FROM users WHERE id = ? AND deleted_at IS NULL", [decoded.id]);
     if (users.length === 0) {
       return next(new AppError("Session holder no longer exists.", 401));
     }
@@ -39,6 +39,7 @@ module.exports = async (req, _res, next) => {
     // Attach verified user properties to request context
     req.user = {
       id: user.id,
+      publicId: user.public_id,
       email: user.email,
       name: user.name,
       role: user.role,

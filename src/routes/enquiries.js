@@ -6,6 +6,8 @@ const validate = require("../middleware/validate");
 const { body } = require("express-validator");
 const asyncHandler = require("../utils/asyncHandler");
 const AppError = require("../utils/AppError");
+const { generateUlid } = require("../utils/ulid");
+const { logAudit } = require("../utils/auditLogger");
 
 const router = express.Router();
 
@@ -28,6 +30,26 @@ const contactRules = [
   body("message").trim().notEmpty().withMessage("Message content is required"),
 ];
 
+// Helper to map DB row to frontend enquiry shape
+function mapEnquiry(row) {
+  return {
+    id: row.public_id,
+    type: row.type,
+    student_name: row.student_name,
+    parent_name: row.parent_name,
+    contact_number: row.contact_number,
+    email: row.email,
+    address: row.address,
+    board: row.board,
+    standard: row.standard,
+    school_name: row.school_name,
+    inquiry_type: row.inquiry_type,
+    message: row.message,
+    status: row.status,
+    created_at: row.created_at,
+  };
+}
+
 // ── POST /api/enquiries/callback ─────────────────────────────────────────────
 router.post(
   "/callback",
@@ -43,13 +65,18 @@ router.post(
       standard,
       schoolName,
     } = req.body;
+    
+    const publicId = generateUlid();
 
-    await query(
+    const result = await query(
       `INSERT INTO enquiries
-         (type, student_name, parent_name, contact_number, email, address, board, standard, school_name, status)
-       VALUES ('callback', ?, ?, ?, ?, ?, ?, ?, ?, 'new')`,
-      [studentName, parentName, contactNumber, email || null, address, board || null, standard || null, schoolName || null]
+         (public_id, type, student_name, parent_name, contact_number, email, address, board, standard, school_name, status)
+       VALUES (?, 'callback', ?, ?, ?, ?, ?, ?, ?, ?, 'new')`,
+      [publicId, studentName, parentName, contactNumber, email || null, address, board || null, standard || null, schoolName || null]
     );
+
+    // Log registration
+    await logAudit("enquiry", result.insertId, "create", null, null, { type: "callback", studentName });
 
     return res.status(201).json({
       success: true,
@@ -64,13 +91,17 @@ router.post(
   validate(contactRules),
   asyncHandler(async (req, res) => {
     const { fullName, email, phoneNumber, inquiryType, message } = req.body;
+    const publicId = generateUlid();
 
-    await query(
+    const result = await query(
       `INSERT INTO enquiries
-         (type, student_name, email, contact_number, inquiry_type, message, status)
-       VALUES ('contact', ?, ?, ?, ?, ?, 'new')`,
-      [fullName, email, phoneNumber || null, inquiryType, message]
+         (public_id, type, student_name, email, contact_number, inquiry_type, message, status)
+       VALUES (?, 'contact', ?, ?, ?, ?, ?, 'new')`,
+      [publicId, fullName, email, phoneNumber || null, inquiryType, message]
     );
+
+    // Log registration
+    await logAudit("enquiry", result.insertId, "create", null, null, { type: "contact", fullName });
 
     return res.status(201).json({
       success: true,
@@ -85,11 +116,11 @@ router.get(
   authenticate,
   authorize(["admin"]),
   asyncHandler(async (req, res) => {
-    const rows = await query("SELECT * FROM enquiries ORDER BY created_at DESC");
+    const rows = await query("SELECT * FROM enquiries WHERE deleted_at IS NULL ORDER BY created_at DESC");
 
     return res.json({
       success: true,
-      enquiries: rows,
+      enquiries: rows.map(mapEnquiry),
     });
   })
 );
@@ -100,17 +131,24 @@ router.put(
   authenticate,
   authorize(["admin"]),
   asyncHandler(async (req, res, next) => {
-    const enquiryId = Number(req.params.id);
+    const enquiryPublicId = req.params.id;
     const { status } = req.body;
 
     if (!["new", "contacted", "resolved"].includes(status)) {
       return next(new AppError("Invalid enquiry status flag.", 400));
     }
 
-    const result = await query("UPDATE enquiries SET status = ? WHERE id = ?", [status, enquiryId]);
-    if (result.affectedRows === 0) {
+    const enquiries = await query("SELECT * FROM enquiries WHERE public_id = ? AND deleted_at IS NULL", [enquiryPublicId]);
+    if (enquiries.length === 0) {
       return next(new AppError("Enquiry record not found.", 404));
     }
+
+    const enquiry = enquiries[0];
+
+    await query("UPDATE enquiries SET status = ?, updated_by = ? WHERE id = ?", [status, req.user.id, enquiry.id]);
+    
+    // Log update audit
+    await logAudit("enquiry", enquiry.id, "status_change", req.user.id, { status: enquiry.status }, { status });
 
     return res.json({
       success: true,

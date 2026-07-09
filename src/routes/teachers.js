@@ -7,6 +7,7 @@ const { body } = require("express-validator");
 const asyncHandler = require("../utils/asyncHandler");
 const AppError = require("../utils/AppError");
 const logger = require("../utils/logger");
+const { logAudit } = require("../utils/auditLogger");
 
 const router = express.Router();
 
@@ -41,10 +42,11 @@ router.get(
     }
 
     let sql = `
-      SELECT tp.*, u.name, u.email, u.avatar_url
+      SELECT tp.*, u.name, u.email, u.avatar_url, u.public_id AS user_public_id
       FROM teacher_profiles tp
       JOIN users u ON tp.user_id = u.id
-      WHERE tp.is_verified = 1 AND u.is_active = 1
+      WHERE tp.is_verified = 1 AND u.is_active = 1 
+        AND tp.deleted_at IS NULL AND u.deleted_at IS NULL
     `;
     const params = [];
 
@@ -77,7 +79,7 @@ router.get(
       params.push(Number(minExp));
     }
 
-    sql += " ORDER BY tp.rating DESC, u.name ASC LIMIT ? OFFSET ?";
+    sql += " ORDER BY tp.display_order DESC, tp.rating DESC, u.name ASC LIMIT ? OFFSET ?";
     params.push(Number(limit), Number(offset));
 
     const rows = await query(sql, params);
@@ -85,14 +87,21 @@ router.get(
     // Fetch available slots for each teacher to render on Discovery Grid
     const teachers = [];
     for (const row of rows) {
-      const slots = await query(
-        "SELECT id, day, time_window, location FROM teacher_slots WHERE teacher_profile_id = ? AND is_booked = 0",
+      const slotsRows = await query(
+        "SELECT public_id, day, time_window, location FROM teacher_slots WHERE teacher_profile_id = ? AND is_booked = 0 AND deleted_at IS NULL",
         [row.id]
       );
+      const slots = slotsRows.map(s => ({
+        id: s.public_id,
+        day: s.day,
+        time_window: s.time_window,
+        location: s.location
+      }));
+
       teachers.push({
-        id: "T" + row.id, // match front-end "T1" formatting
-        profileId: row.id,
-        userId: row.user_id,
+        id: "T" + row.public_id, // match front-end formatting using public_id
+        profileId: row.public_id,
+        userId: row.user_public_id,
         name: row.name,
         subject: row.subject,
         board: row.board,
@@ -129,15 +138,14 @@ router.get(
   "/:id",
   asyncHandler(async (req, res, next) => {
     // Strip T identifier prefix if supplied by front-end
-    const profileIdStr = req.params.id.replace("T", "");
-    const profileId = Number(profileIdStr);
+    const profilePublicId = req.params.id.replace("T", "");
 
     const profiles = await query(
-      `SELECT tp.*, u.name, u.email, u.avatar_url
+      `SELECT tp.*, u.name, u.email, u.avatar_url, u.public_id AS user_public_id
        FROM teacher_profiles tp
        JOIN users u ON tp.user_id = u.id
-       WHERE tp.id = ?`,
-      [profileId]
+       WHERE tp.public_id = ? AND tp.deleted_at IS NULL AND u.deleted_at IS NULL`,
+      [profilePublicId]
     );
 
     if (profiles.length === 0) {
@@ -145,17 +153,23 @@ router.get(
     }
 
     const row = profiles[0];
-    const slots = await query(
-      "SELECT id, day, time_window, location FROM teacher_slots WHERE teacher_profile_id = ? AND is_booked = 0",
+    const slotsRows = await query(
+      "SELECT public_id, day, time_window, location FROM teacher_slots WHERE teacher_profile_id = ? AND is_booked = 0 AND deleted_at IS NULL",
       [row.id]
     );
+    const slots = slotsRows.map(s => ({
+      id: s.public_id,
+      day: s.day,
+      time_window: s.time_window,
+      location: s.location
+    }));
 
     return res.json({
       success: true,
       teacher: {
-        id: "T" + row.id,
-        profileId: row.id,
-        userId: row.user_id,
+        id: "T" + row.public_id,
+        profileId: row.public_id,
+        userId: row.user_public_id,
         name: row.name,
         subject: row.subject,
         board: row.board,
@@ -180,10 +194,9 @@ router.put(
   authenticate,
   authorize(["teacher", "admin"]),
   asyncHandler(async (req, res, next) => {
-    const profileIdStr = req.params.id.replace("T", "");
-    const profileId = Number(profileIdStr);
+    const profilePublicId = req.params.id.replace("T", "");
 
-    const profiles = await query("SELECT * FROM teacher_profiles WHERE id = ?", [profileId]);
+    const profiles = await query("SELECT * FROM teacher_profiles WHERE public_id = ? AND deleted_at IS NULL", [profilePublicId]);
     if (profiles.length === 0) {
       return next(new AppError("Profile not found.", 404));
     }
@@ -229,17 +242,36 @@ router.put(
         cost ? Number(cost) : null,
         expYears ? Number(expYears) : null,
         degree || null,
-        profileId,
+        profile.id,
       ]
     );
 
     // Invalidate directory cache
     localCache.clear();
 
-    const [updated] = await query("SELECT * FROM teacher_profiles WHERE id = ?", [profileId]);
+    const [updated] = await query("SELECT * FROM teacher_profiles WHERE id = ?", [profile.id]);
+
+    // Log update audit log
+    await logAudit("teacher_profile", profile.id, "update", req.user.id, profile, updated);
+
     return res.json({
       success: true,
-      profile: updated,
+      profile: {
+        id: "T" + updated.public_id,
+        profileId: updated.public_id,
+        userId: req.user.publicId,
+        subject: updated.subject,
+        board: updated.board,
+        standard: updated.standard,
+        timingGroup: updated.timing_group,
+        mapRadiusKm: updated.map_radius_km,
+        youtubeUrl: updated.youtube_url,
+        cost: Number(updated.cost_per_hour),
+        expYears: updated.experience_years,
+        stars: Math.round(updated.rating),
+        degree: updated.degree,
+        isVerified: !!updated.is_verified
+      },
     });
   })
 );

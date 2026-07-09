@@ -9,9 +9,10 @@ const router = express.Router();
 function mapPayment(row) {
   return {
     id: row.transaction_id,
-    paymentId: row.id,
+    paymentId: row.public_id, // Map public_id to paymentId
     userScope: row.student_name ? `${row.student_name} (Student)` : "Anonymous User",
     amount: Number(row.amount),
+    currency: row.currency || "INR",
     gatewayMethod: row.gateway_method || "UPI Razorpay API",
     timestamp: row.created_at,
     status: row.status === "settled" ? "Settled Success" : row.status,
@@ -31,16 +32,21 @@ router.get(
     const params = [];
 
     if (req.user.role === "student") {
-      sql += " WHERE p.user_id = ?";
+      sql += " WHERE p.user_id = ? AND p.deleted_at IS NULL AND u.deleted_at IS NULL";
       params.push(req.user.id);
     } else if (req.user.role === "teacher") {
-      sql += `
+      sql = `
+        SELECT p.*, u.name AS student_name
+        FROM payments p
+        JOIN users u ON p.user_id = u.id
         JOIN bookings b ON p.booking_id = b.id
         JOIN teacher_profiles tp ON b.teacher_profile_id = tp.id
-        WHERE tp.user_id = ?
+        WHERE tp.user_id = ? AND p.deleted_at IS NULL AND u.deleted_at IS NULL AND b.deleted_at IS NULL AND tp.deleted_at IS NULL
       `;
       params.push(req.user.id);
-    } // Admins get everything
+    } else {
+      sql += " WHERE p.deleted_at IS NULL AND u.deleted_at IS NULL";
+    }
 
     sql += " ORDER BY p.created_at DESC";
 

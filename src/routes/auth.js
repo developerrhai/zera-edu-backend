@@ -1,12 +1,14 @@
 const express = require("express");
 const { body } = require("express-validator");
-const { query } = require("../config/db");
+const { getPool, query } = require("../config/db");
 const authService = require("../services/authService");
 const emailService = require("../services/emailService");
 const validate = require("../middleware/validate");
 const authenticate = require("../middleware/authenticate");
 const asyncHandler = require("../utils/asyncHandler");
 const AppError = require("../utils/AppError");
+const { generateUlid } = require("../utils/ulid");
+const { logAudit } = require("../utils/auditLogger");
 
 const router = express.Router();
 
@@ -40,45 +42,55 @@ router.post(
     const { email, password, name, role } = req.body;
 
     // Check if email already registered
-    const exists = await query("SELECT id FROM users WHERE email = ?", [email]);
+    const exists = await query("SELECT id FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
     if (exists.length > 0) {
       return next(new AppError("An account with this email address already exists.", 409));
     }
 
     // Hash password and commit user record
     const passwordHash = await authService.hashPassword(password);
+    const userPublicId = generateUlid();
     const result = await query(
-      "INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)",
-      [email, passwordHash, name, role]
+      "INSERT INTO users (public_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)",
+      [userPublicId, email, passwordHash, name, role]
     );
+    const userId = result.insertId;
+
+    // Log the user creation to audit logs
+    await logAudit("user", userId, "create", userId, null, { email, name, role });
 
     // If teacher role registered, dynamically provision profile record in pending status
     if (role === "teacher") {
-      await query(
-        "INSERT INTO teacher_profiles (user_id, subject, cost_per_hour, is_verified) VALUES (?, ?, ?, 0)",
-        [result.insertId, "Specialized Subject", 500.00]
+      const profilePublicId = generateUlid();
+      const [profileResult] = await query(
+        "INSERT INTO teacher_profiles (public_id, user_id, subject, cost_per_hour, is_verified) VALUES (?, ?, ?, ?, 0)",
+        [profilePublicId, userId, "Specialized Subject", 500.00]
       );
       
       // Add in onboarding queue
+      const queuePublicId = generateUlid();
       await query(
-        "INSERT INTO onboarding_queue (user_id, specializations, cost_quote, credentials) VALUES (?, ?, ?, ?)",
-        [result.insertId, "General Studies", 500.00, "Background pending verification"]
+        "INSERT INTO onboarding_queue (public_id, user_id, specializations, cost_quote, credentials) VALUES (?, ?, ?, ?, ?)",
+        [queuePublicId, userId, "General Studies", 500.00, "Background pending verification"]
       );
+
+      // Log teacher profile creation
+      await logAudit("teacher_profile", profileResult.insertId, "create", userId, null, { subject: "Specialized Subject", cost: 500.00 });
     }
 
-    const payload = { id: result.insertId, email, role };
+    const payload = { id: userId, email, role };
     const accessToken = authService.generateAccessToken(payload);
     const refreshToken = authService.generateRefreshToken(payload);
 
     // Update refresh token in DB
-    await query("UPDATE users SET refresh_token = ? WHERE id = ?", [refreshToken, result.insertId]);
+    await query("UPDATE users SET refresh_token = ? WHERE id = ?", [refreshToken, userId]);
 
     return res.status(201).json({
       success: true,
       accessToken,
       refreshToken,
       user: {
-        id: result.insertId,
+        id: userPublicId,
         email,
         name,
         role,
@@ -95,7 +107,7 @@ router.post(
     const { email, password } = req.body;
 
     // Load user record from DB
-    const users = await query("SELECT * FROM users WHERE email = ?", [email]);
+    const users = await query("SELECT * FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
     if (users.length === 0) {
       return next(new AppError("Invalid email or password credentials.", 401));
     }
@@ -119,12 +131,15 @@ router.post(
     // Update refresh token in DB
     await query("UPDATE users SET refresh_token = ? WHERE id = ?", [refreshToken, user.id]);
 
+    // Log the user login to audit logs
+    await logAudit("user", user.id, "login", user.id, null, { ip: req.ip });
+
     return res.json({
       success: true,
       accessToken,
       refreshToken,
       user: {
-        id: user.id,
+        id: user.public_id,
         email: user.email,
         name: user.name,
         role: user.role,
@@ -148,7 +163,7 @@ router.post(
     const decoded = authService.verifyRefreshToken(refreshToken);
 
     // Verify user exists and token matches
-    const users = await query("SELECT refresh_token, is_active FROM users WHERE id = ?", [decoded.id]);
+    const users = await query("SELECT refresh_token, is_active FROM users WHERE id = ? AND deleted_at IS NULL", [decoded.id]);
     if (users.length === 0) {
       return next(new AppError("Invalid refresh session.", 401));
     }
@@ -184,7 +199,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const { email } = req.body;
 
-    const users = await query("SELECT id, name FROM users WHERE email = ?", [email]);
+    const users = await query("SELECT id, name, public_id FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
     if (users.length === 0) {
       // Return 200 to prevent user enumeration security disclosure
       return res.json({
@@ -203,7 +218,7 @@ router.post(
         <h3>System Credential Bypass Request</h3>
         <p>Dear ${user.name},</p>
         <p>A password bypass request was registered for your profile. Use the link below to verify identity:</p>
-        <p><a href="http://localhost:5000/api/auth/reset-password?id=${user.id}">Reset Security Access Key</a></p>
+        <p><a href="http://localhost:5000/api/auth/reset-password?id=${user.public_id}">Reset Security Access Key</a></p>
         <p>Thank you,<br>ZERA EDU Administration Core</p>
       `,
     });
@@ -221,21 +236,50 @@ router.get(
   authenticate,
   asyncHandler(async (req, res) => {
     const users = await query(
-      "SELECT id, email, name, role, avatar_url, created_at FROM users WHERE id = ?",
+      "SELECT id, email, name, role, avatar_url, created_at, public_id FROM users WHERE id = ? AND deleted_at IS NULL",
       [req.user.id]
     );
 
+    if (users.length === 0) {
+      return res.status(404).json({ success: false, error: "User not found." });
+    }
+
+    const userRow = users[0];
+
     let profileDetails = {};
     if (req.user.role === "teacher") {
-      const profile = await query("SELECT * FROM teacher_profiles WHERE user_id = ?", [req.user.id]);
-      if (profile.length > 0) profileDetails = profile[0];
+      const profile = await query("SELECT * FROM teacher_profiles WHERE user_id = ? AND deleted_at IS NULL", [req.user.id]);
+      if (profile.length > 0) {
+        const p = profile[0];
+        profileDetails = {
+          id: p.public_id,
+          profileId: p.public_id,
+          userId: userRow.public_id,
+          subject: p.subject,
+          board: p.board,
+          standard: p.standard,
+          timingGroup: p.timing_group,
+          mapRadiusKm: p.map_radius_km,
+          youtubeUrl: p.youtube_url,
+          cost: Number(p.cost_per_hour),
+          expYears: p.experience_years,
+          stars: Math.round(p.rating),
+          degree: p.degree,
+          isVerified: !!p.is_verified
+        };
+      }
     }
 
     return res.json({
       success: true,
       user: {
-        ...users[0],
-        profile: req.user.role === "teacher" ? profileDetails : undefined,
+        id: userRow.public_id,
+        email: userRow.email,
+        name: userRow.name,
+        role: userRow.role,
+        avatarUrl: userRow.avatar_url,
+        createdAt: userRow.created_at,
+        profile: req.user.role === "teacher" && profileDetails.id ? profileDetails : undefined,
       },
     });
   })
@@ -249,6 +293,8 @@ router.put(
   asyncHandler(async (req, res) => {
     const { name, avatarUrl } = req.body;
 
+    const oldUser = await query("SELECT * FROM users WHERE id = ?", [req.user.id]);
+
     if (name) {
       await query("UPDATE users SET name = ? WHERE id = ?", [name, req.user.id]);
     }
@@ -256,11 +302,20 @@ router.put(
       await query("UPDATE users SET avatar_url = ? WHERE id = ?", [avatarUrl, req.user.id]);
     }
 
-    const [updatedUser] = await query("SELECT id, email, name, role, avatar_url FROM users WHERE id = ?", [req.user.id]);
+    const [updatedUser] = await query("SELECT id, email, name, role, avatar_url, public_id FROM users WHERE id = ?", [req.user.id]);
+
+    // Log update audit log
+    await logAudit("user", req.user.id, "update", req.user.id, oldUser[0], updatedUser);
 
     return res.json({
       success: true,
-      user: updatedUser,
+      user: {
+        id: updatedUser.public_id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+        role: updatedUser.role,
+        avatarUrl: updatedUser.avatar_url,
+      },
     });
   })
 );
