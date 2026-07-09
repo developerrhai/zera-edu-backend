@@ -575,7 +575,7 @@ async function initDb() {
       [generateUlid(), kabirId, booking2Id]
     );
     await conn.execute(
-      `INSERT INTO payments (public_id, transaction_id, user_id, amount, currency, gateway_method, status)
+      `INSERT INTO payments (public_id, transaction_id, user_id, booking_id, amount, currency, gateway_method, status)
        VALUES (?, 'TXN_7761', ?, NULL, 3999.00, 'INR', 'Card Payment', 'settled')`,
       [generateUlid(), kabirId]
     );
