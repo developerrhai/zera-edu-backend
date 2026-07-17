@@ -66,6 +66,7 @@ async function initDb() {
     await conn.execute("DROP TABLE IF EXISTS users;");
     await conn.execute("DROP TABLE IF EXISTS audit_logs;");
     await conn.execute("DROP TABLE IF EXISTS enquiries;");
+    await conn.execute("DROP TABLE IF EXISTS inquiries;");
     await conn.execute("SET FOREIGN_KEY_CHECKS = 1;");
 
     // 1. Audit Logs table (for tracking updates and status changes)
@@ -364,6 +365,34 @@ async function initDb() {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (plan_id) REFERENCES subscription_plans(id) ON DELETE CASCADE,
         KEY idx_user_subs_public (public_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 12. Inquiries / Support Tickets table
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS inquiries (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        public_id CHAR(26) NOT NULL UNIQUE,
+        submitted_by BIGINT NOT NULL,
+        user_role ENUM('student', 'teacher') NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        status ENUM('pending', 'in-progress', 'resolved') NOT NULL DEFAULT 'pending',
+        admin_reply TEXT DEFAULT NULL,
+        
+        -- Universal Tracking columns
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        deleted_at TIMESTAMP NULL DEFAULT NULL,
+        created_by BIGINT DEFAULT NULL,
+        updated_by BIGINT DEFAULT NULL,
+        deleted_by BIGINT DEFAULT NULL,
+        deletion_reason VARCHAR(255) DEFAULT NULL,
+        
+        FOREIGN KEY (submitted_by) REFERENCES users(id) ON DELETE CASCADE,
+        KEY idx_inquiries_public (public_id),
+        KEY idx_inquiries_role (user_role),
+        KEY idx_inquiries_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 

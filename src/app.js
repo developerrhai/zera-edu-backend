@@ -22,6 +22,7 @@ const paymentsRouter = require("./routes/payments");
 const adminRouter = require("./routes/admin");
 const attendanceRouter = require("./routes/attendance");
 const subscriptionsRouter = require("./routes/subscriptions");
+const inquiriesRouter = require("./routes/inquiries");
 
 
 const app = express();
@@ -92,6 +93,7 @@ app.use("/api/payments", paymentsRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/attendance", attendanceRouter);
 app.use("/api/subscriptions", subscriptionsRouter);
+app.use("/api/v1/inquiries", inquiriesRouter);
 
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
