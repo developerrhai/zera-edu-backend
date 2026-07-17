@@ -95,6 +95,11 @@ async function initDb() {
         avatar_url VARCHAR(500) DEFAULT '',
         is_active TINYINT(1) DEFAULT 1,
         
+        -- Password Reset OTP columns
+        reset_otp VARCHAR(6) DEFAULT NULL,
+        reset_otp_expires DATETIME DEFAULT NULL,
+        last_otp_sent DATETIME DEFAULT NULL,
+        
         -- Universal Tracking columns
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

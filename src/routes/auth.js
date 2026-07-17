@@ -29,6 +29,18 @@ const forgotPasswordRules = [
   body("email").isEmail().withMessage("Enter a valid email address").normalizeEmail(),
 ];
 
+const verifyOtpRules = [
+  body("email").isEmail().withMessage("Enter a valid email address").normalizeEmail(),
+  body("otp").isLength({ min: 6, max: 6 }).withMessage("OTP must be exactly 6 digits"),
+  body("otpToken").notEmpty().withMessage("OTP token is required"),
+];
+
+const resetPasswordRules = [
+  body("email").isEmail().withMessage("Enter a valid email address").normalizeEmail(),
+  body("resetToken").notEmpty().withMessage("Reset token is required"),
+  body("newPassword").isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
+];
+
 const updateProfileRules = [
   body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
   body("avatarUrl").optional().isURL().withMessage("Avatar must be a valid URL"),
@@ -196,37 +208,158 @@ router.post(
 router.post(
   "/forgot-password",
   validate(forgotPasswordRules),
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
     const { email } = req.body;
 
-    const users = await query("SELECT id, name, public_id FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
+    const users = await query("SELECT id, name, last_otp_sent FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
     if (users.length === 0) {
-      // Return 200 to prevent user enumeration security disclosure
       return res.json({
         success: true,
-        message: "If the email is registered, a bypass key link has been transmitted.",
+        message: "OTP sent to your email",
+        otpToken: jwt.sign({ email }, process.env.JWT_SECRET || "change_this_to_a_long_random_string", { expiresIn: "5m" })
       });
     }
 
     const user = users[0];
 
-    // Transmit email
+    // Rate limiting check: 60 seconds
+    if (user.last_otp_sent) {
+      const lastSent = new Date(user.last_otp_sent);
+      const now = new Date();
+      const diffMs = now - lastSent;
+      if (diffMs < 60000) {
+        const waitSec = Math.ceil((60000 - diffMs) / 1000);
+        return next(new AppError(`Please wait ${waitSec} seconds before requesting a new OTP.`, 429));
+      }
+    }
+
+    // Generate 6-digit OTP code
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // valid for 5 minutes
+    const now = new Date();
+
+    // Store OTP state in database
+    await query(
+      "UPDATE users SET reset_otp = ?, reset_otp_expires = ?, last_otp_sent = ? WHERE id = ?",
+      [otp, expiresAt, now, user.id]
+    );
+
+    // Generate short-lived JWT token containing email
+    const otpToken = jwt.sign(
+      { email },
+      process.env.JWT_SECRET || "change_this_to_a_long_random_string",
+      { expiresIn: "5m" }
+    );
+
+    // Send the email containing the code
     await emailService.sendMail({
       to: email,
-      subject: "ZERA EDU — Bypass Key Security Request",
+      subject: "Your Password Reset OTP - Zera Edu",
       html: `
-        <h3>System Credential Bypass Request</h3>
-        <p>Dear ${user.name},</p>
-        <p>A password bypass request was registered for your profile. Use the link below to verify identity:</p>
-        <p><a href="http://localhost:5000/api/auth/reset-password?id=${user.public_id}">Reset Security Access Key</a></p>
-        <p>Thank you,<br>ZERA EDU Administration Core</p>
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 500px; border: 1px solid #eee; border-radius: 8px;">
+          <h2 style="color: #4f46e5; text-align: center;">Reset Your Password</h2>
+          <p>Dear ${user.name},</p>
+          <p>Please use the following One-Time Password (OTP) to reset your password. This OTP is valid for 5 minutes.</p>
+          <div style="font-size: 32px; font-weight: bold; text-align: center; letter-spacing: 5px; color: #111827; padding: 15px; margin: 20px 0; background-color: #f3f4f6; border-radius: 6px;">
+            ${otp}
+          </div>
+          <p style="font-size: 12px; color: #6b7280;">If you did not request this, you can safely ignore this email.</p>
+        </div>
       `,
     });
 
     return res.json({
       success: true,
-      message: "If the email is registered, a bypass key link has been transmitted.",
+      message: "OTP sent to your email",
+      otpToken,
     });
+  })
+);
+
+// ── POST /api/auth/verify-otp ────────────────────────────────────────────────
+router.post(
+  "/verify-otp",
+  validate(verifyOtpRules),
+  asyncHandler(async (req, res, next) => {
+    const { email, otp, otpToken } = req.body;
+
+    try {
+      // Decode and verify the otpToken
+      const decoded = jwt.verify(otpToken, process.env.JWT_SECRET || "change_this_to_a_long_random_string");
+      if (decoded.email !== email) {
+        return next(new AppError("Invalid OTP token", 400));
+      }
+
+      const users = await query("SELECT id, reset_otp, reset_otp_expires FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
+      if (users.length === 0) {
+        return next(new AppError("User not found", 404));
+      }
+
+      const user = users[0];
+      if (!user.reset_otp || user.reset_otp !== otp) {
+        return next(new AppError("Invalid OTP code", 400));
+      }
+
+      const expiresAt = new Date(user.reset_otp_expires);
+      if (expiresAt < new Date()) {
+        return next(new AppError("OTP has expired. Please request a new one.", 400));
+      }
+
+      // Clear OTP details on verification success
+      await query("UPDATE users SET reset_otp = NULL, reset_otp_expires = NULL WHERE id = ?", [user.id]);
+
+      // Generate password reset token
+      const resetToken = jwt.sign(
+        { email, verified: true },
+        process.env.JWT_SECRET || "change_this_to_a_long_random_string",
+        { expiresIn: "10m" }
+      );
+
+      return res.json({
+        success: true,
+        message: "OTP verified successfully",
+        resetToken,
+      });
+    } catch (err) {
+      return next(new AppError("OTP has expired or is invalid. Please request a new one.", 400));
+    }
+  })
+);
+
+// ── POST /api/auth/reset-password-otp ────────────────────────────────────────
+router.post(
+  "/reset-password-otp",
+  validate(resetPasswordRules),
+  asyncHandler(async (req, res, next) => {
+    const { email, resetToken, newPassword } = req.body;
+
+    try {
+      const decoded = jwt.verify(resetToken, process.env.JWT_SECRET || "change_this_to_a_long_random_string");
+      if (decoded.email !== email || !decoded.verified) {
+        return next(new AppError("Invalid reset session", 400));
+      }
+
+      const users = await query("SELECT id FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
+      if (users.length === 0) {
+        return next(new AppError("User not found", 404));
+      }
+
+      const user = users[0];
+
+      // Hash and update password
+      const hash = await authService.hashPassword(newPassword);
+      await query("UPDATE users SET password_hash = ? WHERE id = ?", [hash, user.id]);
+
+      // Log to audit logger
+      await logAudit("user", user.id, "password_reset", user.id, null, { email });
+
+      return res.json({
+        success: true,
+        message: "Password updated successfully"
+      });
+    } catch (err) {
+      return next(new AppError("Reset session has expired. Please start over.", 400));
+    }
   })
 );
 
