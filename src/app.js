@@ -32,16 +32,17 @@ app.use(helmet());
 app.use(compression());
 
 // CORS config supporting multiple whitelisted origins
-const allowedOrigins = (process.env.FRONTEND_ORIGIN || "http://localhost:5500,http://127.0.0.1:5500")
+const allowedOrigins = (process.env.FRONTEND_ORIGIN || "http://localhost:5500,http://127.0.0.1:5500,https://zera-edu-frontend.vercel.app")
   .split(",")
-  .map((o) => o.trim());
+  .map((o) => o.trim().replace(/\/$/, ""));
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) === -1) {
+      const normalizedOrigin = origin.replace(/\/$/, "");
+      if (allowedOrigins.indexOf(normalizedOrigin) === -1) {
         const msg = "CORS policy restriction. Origin unauthorized.";
         return callback(new Error(msg), false);
       }

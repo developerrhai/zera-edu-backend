@@ -31,9 +31,19 @@ router.get(
       offset = 0,
     } = req.query;
 
+    // Parse and sanitize query pagination parameters
+    let numericLimit = parseInt(limit, 10);
+    let numericOffset = parseInt(offset, 10);
+    if (isNaN(numericLimit) || numericLimit <= 0) {
+      numericLimit = 20;
+    }
+    if (isNaN(numericOffset) || numericOffset < 0) {
+      numericOffset = 0;
+    }
+
     // Create unique cache key for current filter criteria
     const cacheKey = JSON.stringify({
-      subject, standard, board, timingGroup, location, minCost, maxCost, minExp, limit, offset
+      subject, standard, board, timingGroup, location, minCost, maxCost, minExp, limit: numericLimit, offset: numericOffset
     });
 
     if (localCache.has(cacheKey)) {
@@ -80,7 +90,7 @@ router.get(
     }
 
     sql += " ORDER BY tp.display_order DESC, tp.rating DESC, u.name ASC LIMIT ? OFFSET ?";
-    params.push(Number(limit), Number(offset));
+    params.push(numericLimit, numericOffset);
 
     const rows = await query(sql, params);
 
