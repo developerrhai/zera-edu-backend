@@ -40,7 +40,10 @@ function getPool() {
  * Run parameterized query and return rows.
  */
 async function query(sql, values = []) {
-  const [rows] = await getPool().execute(sql, values);
+  const isLimitOffset = /limit\s+\?|offset\s+\?/i.test(sql);
+  const [rows] = isLimitOffset
+    ? await getPool().query(sql, values)
+    : await getPool().execute(sql, values);
   return rows;
 }
 

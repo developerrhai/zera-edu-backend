@@ -40,8 +40,8 @@ const allowedOrigins = (process.env.FRONTEND_ORIGIN || "http://localhost:5500,ht
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) return callback(null, true);
+      // Allow requests with no origin or null origin (like mobile apps, curl, or direct local file execution)
+      if (!origin || origin === "null") return callback(null, true);
       const normalizedOrigin = origin.replace(/\/$/, "");
       if (allowedOrigins.indexOf(normalizedOrigin) === -1) {
         const msg = "CORS policy restriction. Origin unauthorized.";
