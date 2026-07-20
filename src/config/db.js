@@ -58,6 +58,8 @@ async function initDb() {
     // ─── Drop existing tables to clean build ──────────────────────────────────
     // Drop in reverse order of foreign key dependency
     await conn.execute("SET FOREIGN_KEY_CHECKS = 0;");
+    await conn.execute("DROP TABLE IF EXISTS notifications;");
+    await conn.execute("DROP TABLE IF EXISTS fcm_tokens;");
     await conn.execute("DROP TABLE IF EXISTS class_sessions;");
     await conn.execute("DROP TABLE IF EXISTS user_subscriptions;");
     await conn.execute("DROP TABLE IF EXISTS subscription_plans;");
@@ -431,6 +433,40 @@ async function initDb() {
         FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE,
         UNIQUE KEY idx_student_subject_lecture (student_id, subject, lecture_number, deleted_at),
         KEY idx_class_sessions_public (public_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 14. FCM Tokens table
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS fcm_tokens (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        public_id CHAR(26) NOT NULL UNIQUE,
+        user_id BIGINT NOT NULL,
+        token VARCHAR(500) NOT NULL UNIQUE,
+        device_type VARCHAR(50) DEFAULT 'unknown',
+        last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        KEY idx_fcm_tokens_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 15. Notifications History table
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        public_id CHAR(26) NOT NULL UNIQUE,
+        title VARCHAR(255) NOT NULL,
+        body TEXT NOT NULL,
+        target_type ENUM('single', 'bulk', 'filtered') NOT NULL,
+        target_criteria JSON DEFAULT NULL,
+        sent_by BIGINT DEFAULT NULL,
+        success_count INT DEFAULT 0,
+        failure_count INT DEFAULT 0,
+        status ENUM('pending', 'sent', 'failed') DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sent_by) REFERENCES users(id) ON DELETE SET NULL,
+        KEY idx_notifications_public (public_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 

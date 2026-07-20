@@ -8,6 +8,7 @@ const morgan = require("morgan");
 const path = require("path");
 
 const { initDb } = require("./config/db");
+const { initFirebase } = require("./config/firebase");
 const { globalLimiter } = require("./middleware/rateLimiter");
 const errorHandler = require("./middleware/errorHandler");
 const logger = require("./utils/logger");
@@ -24,6 +25,7 @@ const attendanceRouter = require("./routes/attendance");
 const subscriptionsRouter = require("./routes/subscriptions");
 const inquiriesRouter = require("./routes/inquiries");
 const classSessionsRouter = require("./routes/classSessions");
+const notificationsRouter = require("./routes/notifications");
 
 
 const app = express();
@@ -96,6 +98,7 @@ app.use("/api/attendance", attendanceRouter);
 app.use("/api/attendance/class-sessions", classSessionsRouter);
 app.use("/api/subscriptions", subscriptionsRouter);
 app.use("/api/v1/inquiries", inquiriesRouter);
+app.use("/api/notifications", notificationsRouter);
 
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
@@ -114,6 +117,9 @@ async function start() {
   try {
     // Connect to database and seed baseline records
     await initDb();
+    
+    // Initialize Firebase Admin SDK
+    initFirebase();
 
     app.listen(PORT, () => {
       console.log("─────────────────────────────────────────────────────────────");
