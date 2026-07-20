@@ -23,6 +23,7 @@ const adminRouter = require("./routes/admin");
 const attendanceRouter = require("./routes/attendance");
 const subscriptionsRouter = require("./routes/subscriptions");
 const inquiriesRouter = require("./routes/inquiries");
+const classSessionsRouter = require("./routes/classSessions");
 
 
 const app = express();
@@ -92,6 +93,7 @@ app.use("/api/enquiries", enquiriesRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/attendance", attendanceRouter);
+app.use("/api/attendance/class-sessions", classSessionsRouter);
 app.use("/api/subscriptions", subscriptionsRouter);
 app.use("/api/v1/inquiries", inquiriesRouter);
 

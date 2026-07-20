@@ -58,6 +58,7 @@ async function initDb() {
     // ─── Drop existing tables to clean build ──────────────────────────────────
     // Drop in reverse order of foreign key dependency
     await conn.execute("SET FOREIGN_KEY_CHECKS = 0;");
+    await conn.execute("DROP TABLE IF EXISTS class_sessions;");
     await conn.execute("DROP TABLE IF EXISTS user_subscriptions;");
     await conn.execute("DROP TABLE IF EXISTS subscription_plans;");
     await conn.execute("DROP TABLE IF EXISTS attendance_records;");
@@ -396,6 +397,40 @@ async function initDb() {
         KEY idx_inquiries_public (public_id),
         KEY idx_inquiries_role (user_role),
         KEY idx_inquiries_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 13. Class Sessions table for OTP system
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS class_sessions (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        public_id CHAR(26) NOT NULL UNIQUE,
+        student_id BIGINT NOT NULL,
+        teacher_id BIGINT NOT NULL,
+        subject VARCHAR(100) NOT NULL,
+        lecture_number INT NOT NULL,
+        checkin_otp_hash VARCHAR(255) DEFAULT NULL,
+        checkin_otp_expiry DATETIME DEFAULT NULL,
+        checkin_verified_at DATETIME DEFAULT NULL,
+        checkout_otp_hash VARCHAR(255) DEFAULT NULL,
+        checkout_otp_expiry DATETIME DEFAULT NULL,
+        checkout_verified_at DATETIME DEFAULT NULL,
+        status ENUM('scheduled', 'in-progress', 'completed', 'auto-completed') NOT NULL DEFAULT 'scheduled',
+        checkin_failed_attempts INT DEFAULT 0,
+        checkin_blocked_until DATETIME DEFAULT NULL,
+        checkout_failed_attempts INT DEFAULT 0,
+        checkout_blocked_until DATETIME DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        deleted_at TIMESTAMP NULL DEFAULT NULL,
+        created_by BIGINT DEFAULT NULL,
+        updated_by BIGINT DEFAULT NULL,
+        deleted_by BIGINT DEFAULT NULL,
+        deletion_reason VARCHAR(255) DEFAULT NULL,
+        FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE KEY idx_student_subject_lecture (student_id, subject, lecture_number, deleted_at),
+        KEY idx_class_sessions_public (public_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
