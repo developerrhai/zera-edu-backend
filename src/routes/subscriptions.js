@@ -107,7 +107,7 @@ router.post(
         [req.user.id, userId]
       );
 
-      // Create new subscription record (30 days cycle)
+      // Create new subscription record (30 days cycle) - Pending until payment
       const startDate = new Date();
       const endDate = new Date();
       endDate.setDate(startDate.getDate() + 30);
@@ -115,20 +115,20 @@ router.post(
 
       const [subResult] = await conn.execute(
         `INSERT INTO user_subscriptions (public_id, user_id, plan_id, status, start_date, end_date, created_by)
-         VALUES (?, ?, ?, 'Active', ?, ?, ?)`,
+         VALUES (?, ?, ?, 'Pending Payment', ?, ?, ?)`,
         [subscriptionPublicId, userId, plan.id, startDate, endDate, req.user.id]
       );
 
       // Log subscription creation
-      await logAudit("user_subscription", subResult.insertId, "create", req.user.id, null, { plan_id: plan.id, status: "Active" });
+      await logAudit("user_subscription", subResult.insertId, "create", req.user.id, null, { plan_id: plan.id, status: "Pending Payment" });
 
       // Log payment history auditor
       const txnId = "TXN_" + Math.floor(10000 + Math.random() * 90000);
       const paymentPublicId = generateUlid();
       const [paymentResult] = await conn.execute(
-        `INSERT INTO payments (public_id, transaction_id, user_id, amount, currency, gateway_method, status, created_by)
-         VALUES (?, ?, ?, ?, 'INR', 'UPI Razorpay API', 'settled', ?)`,
-        [paymentPublicId, txnId, userId, plan.price, req.user.id]
+        `INSERT INTO payments (public_id, transaction_id, user_id, subscription_id, amount, currency, gateway_method, status, created_by)
+         VALUES (?, ?, ?, ?, ?, 'INR', 'PhonePe', 'pending', ?)`,
+        [paymentPublicId, txnId, userId, subResult.insertId, plan.price, req.user.id]
       );
 
       // Log payment audit

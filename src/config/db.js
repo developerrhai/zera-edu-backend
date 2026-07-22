@@ -115,7 +115,10 @@ async function initDb() {
         updated_by BIGINT DEFAULT NULL,
         deleted_by BIGINT DEFAULT NULL,
         deletion_reason VARCHAR(255) DEFAULT NULL,
+        referral_code VARCHAR(20) UNIQUE,
+        referred_by BIGINT DEFAULT NULL,
         
+        FOREIGN KEY (referred_by) REFERENCES users(id) ON DELETE SET NULL,
         KEY idx_users_public (public_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
@@ -252,6 +255,7 @@ async function initDb() {
         transaction_id VARCHAR(50) NOT NULL UNIQUE,
         user_id BIGINT NOT NULL,
         booking_id BIGINT DEFAULT NULL,
+        subscription_id BIGINT DEFAULT NULL,
         amount DECIMAL(12,2) NOT NULL,
         currency CHAR(3) DEFAULT 'INR', -- Money tracking enhancement
         gateway_method VARCHAR(100) DEFAULT '',
@@ -474,8 +478,8 @@ async function initDb() {
     console.log("[DB] Seeding default admin user...");
     const adminHashedPw = await bcrypt.hash("admin123", 12);
     await conn.execute(
-      "INSERT INTO users (public_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)",
-      [generateUlid(), "admin@zeraedu.com", adminHashedPw, "System Administrator", "admin"]
+      "INSERT INTO users (public_id, email, password_hash, name, role, referral_code) VALUES (?, ?, ?, ?, ?, ?)",
+      [generateUlid(), "admin@zeraedu.com", adminHashedPw, "System Administrator", "admin", "REF_ADMIN"]
     );
 
     // ─── Seed Default Student Users ──────────────────────────────────────────
@@ -484,22 +488,22 @@ async function initDb() {
     
     const student1Public = generateUlid();
     const [resS1] = await conn.execute(
-      "INSERT INTO users (public_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, 'student')",
-      [student1Public, "kabir@zeraedu.com", studentHashedPw, "Kabir Mehta"]
+      "INSERT INTO users (public_id, email, password_hash, name, role, referral_code) VALUES (?, ?, ?, ?, 'student', ?)",
+      [student1Public, "kabir@zeraedu.com", studentHashedPw, "Kabir Mehta", "REF_KABIR"]
     );
     const kabirId = resS1.insertId;
 
     const student2Public = generateUlid();
     const [resS2] = await conn.execute(
-      "INSERT INTO users (public_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, 'student')",
-      [student2Public, "rohan@zeraedu.com", studentHashedPw, "Rohan Sharma"]
+      "INSERT INTO users (public_id, email, password_hash, name, role, referral_code, referred_by) VALUES (?, ?, ?, ?, 'student', ?, ?)",
+      [student2Public, "rohan@zeraedu.com", studentHashedPw, "Rohan Sharma", "REF_ROHAN", kabirId]
     );
     const rohanId = resS2.insertId;
 
     const student3Public = generateUlid();
     const [resS3] = await conn.execute(
-      "INSERT INTO users (public_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, 'student')",
-      [student3Public, "priya@zeraedu.com", studentHashedPw, "Priya Deshmukh"]
+      "INSERT INTO users (public_id, email, password_hash, name, role, referral_code) VALUES (?, ?, ?, ?, 'student', ?)",
+      [student3Public, "priya@zeraedu.com", studentHashedPw, "Priya Deshmukh", "REF_PRIYA"]
     );
     const priyaId = resS3.insertId;
 
@@ -509,8 +513,8 @@ async function initDb() {
     
     // Teacher 1
     const [resU1] = await conn.execute(
-      "INSERT INTO users (public_id, email, password_hash, name, role, avatar_url) VALUES (?, ?, ?, ?, 'teacher', ?)",
-      [generateUlid(), "ananya@zeraedu.com", teacherHashedPw, "Prof. Ananya Kulkarni", "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80"]
+      "INSERT INTO users (public_id, email, password_hash, name, role, avatar_url, referral_code) VALUES (?, ?, ?, ?, 'teacher', ?, ?)",
+      [generateUlid(), "ananya@zeraedu.com", teacherHashedPw, "Prof. Ananya Kulkarni", "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80", "REF_ANANYA"]
     );
     const u1Id = resU1.insertId;
     const [resP1] = await conn.execute(
@@ -522,8 +526,8 @@ async function initDb() {
 
     // Teacher 2
     const [resU2] = await conn.execute(
-      "INSERT INTO users (public_id, email, password_hash, name, role, avatar_url) VALUES (?, ?, ?, ?, 'teacher', ?)",
-      [generateUlid(), "rajesh@zeraedu.com", teacherHashedPw, "Dr. Rajesh Kapoor", "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=150&auto=format&fit=crop&q=80"]
+      "INSERT INTO users (public_id, email, password_hash, name, role, avatar_url, referral_code) VALUES (?, ?, ?, ?, 'teacher', ?, ?)",
+      [generateUlid(), "rajesh@zeraedu.com", teacherHashedPw, "Dr. Rajesh Kapoor", "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=150&auto=format&fit=crop&q=80", "REF_RAJESH"]
     );
     const u2Id = resU2.insertId;
     const [resP2] = await conn.execute(
@@ -535,8 +539,8 @@ async function initDb() {
 
     // Teacher 3
     const [resU3] = await conn.execute(
-      "INSERT INTO users (public_id, email, password_hash, name, role, avatar_url) VALUES (?, ?, ?, ?, 'teacher', ?)",
-      [generateUlid(), "vikram@zeraedu.com", teacherHashedPw, "Dr. Vikram Malhotra", "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80"]
+      "INSERT INTO users (public_id, email, password_hash, name, role, avatar_url, referral_code) VALUES (?, ?, ?, ?, 'teacher', ?, ?)",
+      [generateUlid(), "vikram@zeraedu.com", teacherHashedPw, "Dr. Vikram Malhotra", "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80", "REF_VIKRAM"]
     );
     const u3Id = resU3.insertId;
     const [resP3] = await conn.execute(

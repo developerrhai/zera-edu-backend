@@ -51,7 +51,7 @@ router.post(
   "/register",
   validate(registerRules),
   asyncHandler(async (req, res, next) => {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, referred_by_code } = req.body;
 
     // Check if email already registered
     const exists = await query("SELECT id FROM users WHERE email = ? AND deleted_at IS NULL", [email]);
@@ -59,12 +59,24 @@ router.post(
       return next(new AppError("An account with this email address already exists.", 409));
     }
 
+    // Lookup referred_by user if code provided
+    let referredById = null;
+    if (referred_by_code) {
+      const referrer = await query("SELECT id FROM users WHERE referral_code = ? AND deleted_at IS NULL", [referred_by_code]);
+      if (referrer.length > 0) {
+        referredById = referrer[0].id;
+      }
+    }
+
+    // Generate unique referral code for this new user
+    const referralCode = "REF_" + Math.random().toString(36).substring(2, 8).toUpperCase();
+
     // Hash password and commit user record
     const passwordHash = await authService.hashPassword(password);
     const userPublicId = generateUlid();
     const result = await query(
-      "INSERT INTO users (public_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)",
-      [userPublicId, email, passwordHash, name, role]
+      "INSERT INTO users (public_id, email, password_hash, name, role, referral_code, referred_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [userPublicId, email, passwordHash, name, role, referralCode, referredById]
     );
     const userId = result.insertId;
 

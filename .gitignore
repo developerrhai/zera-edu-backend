@@ -5,5 +5,6 @@ uploads/
 coverage/
 .DS_Store
 *.pem
+*.md
 CHAT_HISTORY.md
 server_info.md

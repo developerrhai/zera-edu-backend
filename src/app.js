@@ -26,6 +26,7 @@ const subscriptionsRouter = require("./routes/subscriptions");
 const inquiriesRouter = require("./routes/inquiries");
 const classSessionsRouter = require("./routes/classSessions");
 const notificationsRouter = require("./routes/notifications");
+const referralsRouter = require("./routes/referrals");
 
 
 const app = express();
@@ -99,6 +100,7 @@ app.use("/api/attendance/class-sessions", classSessionsRouter);
 app.use("/api/subscriptions", subscriptionsRouter);
 app.use("/api/v1/inquiries", inquiriesRouter);
 app.use("/api/notifications", notificationsRouter);
+app.use("/api/referrals", referralsRouter);
 
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────

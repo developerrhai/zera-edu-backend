@@ -165,7 +165,7 @@ router.post(
       
       const [paymentResult] = await conn.execute(
         `INSERT INTO payments (public_id, transaction_id, user_id, booking_id, amount, currency, gateway_method, status, created_by)
-         VALUES (?, ?, ?, ?, ?, 'INR', 'UPI Razorpay API', 'settled', ?)`,
+         VALUES (?, ?, ?, ?, ?, 'INR', 'PhonePe', 'pending', ?)`,
         [paymentPublicId, txnId, studentId, bookingId, amountWithTax, req.user.id]
       );
 
